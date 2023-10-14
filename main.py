@@ -65,27 +65,25 @@ def gpt(user_input):
     return gpt_ans
 
 
-
 @app.route('/audio/<filename>', methods=['GET'])
 def serve_audio(filename):
     audio_directory = '.'  
     file_path = safe_join(audio_directory, filename)  
 
     if os.path.isfile(file_path):
-        return send_file(file_path, as_attachment=True)
+        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
     else:
         return "File not found", 404
+
 
 @app.route('/process_query', methods=['POST'])
 def process_input():
     data = request.json
     user_input = data['user_input']
-    
-    
     unique_id = str(uuid.uuid4())
 
     gpt_ans = gpt(user_input)
-    audio_file_name = getVoice(gpt_ans, unique_id)
+    audio_file_name = getVoice(gpt_ans, 1)
 
     response = {
         'unique_id': unique_id,  
