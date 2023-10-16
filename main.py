@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import safe_join
@@ -7,12 +8,16 @@ from elevenlabs import Voice, VoiceSettings, generate, save
 import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 app = Flask(__name__)
 CORS(app, resources={
     r"/process_query": {"origins": "*"}, 
-    r"/delete-audios": {"origins": "*"}
+    r"/delete-audios": {"origins": "*"},
+    r"/get_messages/*": {"origins": "http://127.0.0.1:5000"}
     })
+
+
 
 load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
@@ -20,6 +25,11 @@ ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 
 openai.api_key = os.environ.get('OPENAI_API_KEY')
 set_api_key(ElevenLabsKey)
+
+client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
+db = client.nvdata
+collection = db.collection
+
 
 
 def getVoice(text, id):
@@ -39,7 +49,7 @@ def getVoice(text, id):
     return audio_file
 
 
-def gpt(user_input):
+def motivation(user_input):
     messages = [
         {
             "role": "system",
@@ -74,6 +84,7 @@ def serve_audio(filename):
         return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
     else:
         return "File not found", 404
+    
 
 
 @app.route('/process_query', methods=['POST'])
@@ -81,17 +92,49 @@ def process_input():
     data = request.json
     user_input = data['user_input']
     unique_id = str(uuid.uuid4())
+    userId = data['userId']  
+    # time = data['timestamp']
 
-    gpt_ans = gpt(user_input)
+
+    timestamp_dt = datetime.strptime(data['timestamp'], "%Y-%m-%dT%H:%M:%S.%f")
+
+
+
+    gpt_ans = motivation(user_input)
     audio_file_name = getVoice(gpt_ans, 1)
 
     response = {
         'unique_id': unique_id,  
         'text_response': gpt_ans,
-        'audio_response': request.url_root + 'audio/' + audio_file_name  
+        'audio_response': request.url_root + 'audio/' + audio_file_name  ,
     }
+    message = {
+        'userId': userId,
+        'message': {'input': user_input, 
+                    'output' : response['text_response'], 
+                    'timestamp': timestamp_dt.strftime("%Y-%m-%dT%H:%M:%S.%f"),
+                     'isFavorite': False,
+                    },
+    }
+    db.collection.insert_one(message) 
+    print('Received message with timestamp:', timestamp_dt) 
     print(response)
     return jsonify(response)
+
+
+
+@app.route('/get_messages/<user_id>', methods=['GET'])
+def get_messages(user_id):
+    # Your logic to fetch messages by userId
+    messages_cursor = db.collection.find({"userId": user_id})
+    messages = [message for message in messages_cursor]
+    for message in messages:
+        del message['_id']  
+    return jsonify(messages)
+
+
+
+
 
 
 @app.route('/delete-audios', methods=['DELETE'])
@@ -106,7 +149,29 @@ def delete_audios():
     except Exception as e:
         print(e)
         return jsonify({"message": "An error occurred while deleting audio files"}), 500
+    
+@app.route('/update-favorite', methods=['POST'])
+def update_favorite():
+    try:
+        data = request.json
+        print('Received data: ', data)  
+        message = data['message']
+        is_favorite = data['isFavorite']
 
+        result = db.collection.update_one(
+            {"message.input": message['input'], "message.output": message['output']},
+            {"$set": {"message.isFavorite": is_favorite}}
+        )
+        
+        print('Update result: ', result.raw_result)  
+        if result.matched_count > 0:
+            return jsonify(success=True)
+        else:
+            return jsonify(success=False, error="Message not found")
+
+    except Exception as e:
+        print('Error: ', e)
+        return jsonify(success=False, error=str(e))
 
 
 
