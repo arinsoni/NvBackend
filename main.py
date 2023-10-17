@@ -8,7 +8,7 @@ from elevenlabs import Voice, VoiceSettings, generate, save
 import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -33,7 +33,7 @@ collection = db.collection
 
 
 def getVoice(text, id):
-    print("audio generating...")
+    print(f"audio generating... ")
     audio = generate(
         text,
         voice=Voice(
@@ -50,6 +50,7 @@ def getVoice(text, id):
 
 
 def motivation(user_input):
+
     messages = [
         {
             "role": "system",
@@ -75,6 +76,31 @@ def motivation(user_input):
     return gpt_ans
 
 
+
+def threadSum(txt):
+    print(f"summarizing...{txt}")
+    messages = [
+            {
+                "role": "system",
+                "content": f"summarize {txt}in less than 8 words "
+            },
+            {
+                "role": "user",
+                "content": txt
+            }
+        ]
+
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo", 
+        messages=messages,
+        temperature=0,
+        max_tokens=50  
+    )
+
+    threadName = response['choices'][0]['message']['content'].strip()
+    return threadName
+
+
 @app.route('/audio/<filename>', methods=['GET'])
 def serve_audio(filename):
     audio_directory = '.'  
@@ -91,49 +117,93 @@ def serve_audio(filename):
 def process_input():
     data = request.json
     user_input = data['user_input']
-    unique_id = str(uuid.uuid4())
     userId = data['userId']  
-    # time = data['timestamp']
-
+    threadId = data['threadId'] 
+    isFirstMessageSent = data['isFirstMessageSent']
+    gpt_ans = motivation(user_input)
+    audio_file_name = getVoice(gpt_ans, userId)
 
     timestamp_dt = datetime.strptime(data['timestamp'], "%Y-%m-%dT%H:%M:%S.%f")
-
-
-
-    gpt_ans = motivation(user_input)
-    audio_file_name = getVoice(gpt_ans, 1)
+   
+    print(f"isFirstMessageSent: {isFirstMessageSent}")
 
     response = {
-        'unique_id': unique_id,  
         'text_response': gpt_ans,
-        'audio_response': request.url_root + 'audio/' + audio_file_name  ,
+        'audio_response': request.url_root + 'audio/' + audio_file_name,
     }
-    message = {
-        'userId': userId,
-        'message': {'input': user_input, 
-                    'output' : response['text_response'], 
-                    'timestamp': timestamp_dt.strftime("%Y-%m-%dT%H:%M:%S.%f"),
-                     'isFavorite': False,
-                    },
+   
+    message_content = {
+        'input': user_input,
+        'output': response['text_response'],
+        'audioUrl': response['audio_response'],
+        'timestamp': timestamp_dt.strftime("%Y-%m-%dT%H:%M:%S.%f"),
+        'isFavorite': False,
     }
-    db.collection.insert_one(message) 
-    print('Received message with timestamp:', timestamp_dt) 
+    existing_thread = db.collection.find_one({'threadId': threadId})
+    if existing_thread:
+        
+        db.collection.update_one({'threadId': threadId}, {'$push': {'messages': message_content}})
+    else:
+        threadName = threadSum(user_input)
+        thread = {
+            'userId': userId,
+            'threadId': threadId,
+            'threadName': threadName,
+            'messages': [message_content],
+        }
+        db.collection.insert_one(thread)
+
+    print('Received message with timestamp:', timestamp_dt)
     print(response)
+
     return jsonify(response)
 
 
 
-@app.route('/get_messages/<user_id>', methods=['GET'])
-def get_messages(user_id):
-    # Your logic to fetch messages by userId
-    messages_cursor = db.collection.find({"userId": user_id})
-    messages = [message for message in messages_cursor]
-    for message in messages:
-        del message['_id']  
-    return jsonify(messages)
+
+
+@app.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
+def get_messages(user_id, thread_id):
+    print(f"Fetching messages for user_id: {user_id} and thread_id: {thread_id}")
+    thread = db.collection.find_one({"userId": user_id, "threadId": thread_id})
+
+    if thread:
+        messages = thread['messages']
+        thread_name = thread.get('threadName', 'Default Thread Name')  
+
+        print(f"Fetched messages: {messages}")
+
+        return jsonify({
+            'messages': messages,
+            'threadName': thread_name  
+        })
+    else:
+        return jsonify([])  
 
 
 
+
+
+
+@app.route('/get_threads/<user_id>', methods=['GET'])
+def get_threads(user_id):
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400
+
+    try:
+        threads_cursor = db.collection.find({"userId": user_id}, {"_id": 0, "threadId": 1, "threadName": 1})
+
+        threads = list(threads_cursor)
+        if threads:
+            distinct_threads = list({(x['threadId'], x['threadName']) for x in threads if 'threadId' in x and 'threadName' in x})
+            formatted_threads = [{"threadId": x[0], "threadName": x[1]} for x in distinct_threads]
+            print(f"formatted_threads {formatted_threads}")
+            return jsonify(formatted_threads), 200
+        else:
+            return jsonify({"message": "No threads found for the given user ID"}), 404
+    except Exception as e:
+        print(e)
+        return jsonify({"error": "An error occurred while fetching the threads"}), 500
 
 
 
@@ -150,28 +220,28 @@ def delete_audios():
         print(e)
         return jsonify({"message": "An error occurred while deleting audio files"}), 500
     
-@app.route('/update-favorite', methods=['POST'])
-def update_favorite():
-    try:
-        data = request.json
-        print('Received data: ', data)  
-        message = data['message']
-        is_favorite = data['isFavorite']
+# @app.route('/update-favorite', methods=['POST'])
+# def update_favorite():
+#     try:
+#         data = request.json
+#         print('Received data: ', data)  
+#         message = data['message']
+#         is_favorite = data['isFavorite']
 
-        result = db.collection.update_one(
-            {"message.input": message['input'], "message.output": message['output']},
-            {"$set": {"message.isFavorite": is_favorite}}
-        )
+#         result = db.collection.update_one(
+#             {"message.input": message['input'], "message.output": message['output']},
+#             {"$set": {"message.isFavorite": is_favorite}}
+#         )
         
-        print('Update result: ', result.raw_result)  
-        if result.matched_count > 0:
-            return jsonify(success=True)
-        else:
-            return jsonify(success=False, error="Message not found")
+#         print('Update result: ', result.raw_result)  
+#         if result.matched_count > 0:
+#             return jsonify(success=True)
+#         else:
+#             return jsonify(success=False, error="Message not found")
 
-    except Exception as e:
-        print('Error: ', e)
-        return jsonify(success=False, error=str(e))
+#     except Exception as e:
+#         print('Error: ', e)
+#         return jsonify(success=False, error=str(e))
 
 
 
