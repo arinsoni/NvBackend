@@ -169,6 +169,8 @@ def process_input():
                 'threadId': threadId,
                 'threadName': threadName,
                 'messages': [message_content],
+                'isFavorite': False,
+                
             }]
         }
         db.collection.insert_one(new_user)
@@ -220,9 +222,10 @@ def get_threads(user_id):
             threads = user_document['threads']
             print(f"threads {threads}")
             formatted_threads = [
-                {"threadId": thread['threadId'], "threadName": thread['threadName']} 
-                for thread in threads if 'threadId' in thread and 'threadName' in thread 
-            ]
+    {"threadId": thread['threadId'], "threadName": thread['threadName'], "isFavorite": thread['isFavorite'] } 
+    for thread in threads if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread
+]
+
 
             if formatted_threads:
                 return jsonify(formatted_threads), 200
@@ -233,6 +236,43 @@ def get_threads(user_id):
     except Exception as e:
         print(e)
         return jsonify({"error": "An error occurred while fetching the threads"}), 500
+
+@app.route('/update-favorite-thread', methods=['POST'])
+def update_favorite_thread():
+    try:
+        data = request.json
+        print('Received data: ', data)
+
+        required_fields = ['userId', 'threadId', 'isFavorite']
+        if not all(field in data for field in required_fields):
+            raise ValueError(f"Missing one or more required fields: {', '.join(required_fields)}")
+
+        user_id = data['userId']
+        thread_id = data['threadId']
+        is_favorite = data['isFavorite']
+
+        query = {
+            'userId': user_id,
+            'threads.threadId': thread_id
+        }
+
+        update = {
+            '$set': {
+                'threads.$.isFavorite': is_favorite
+            }
+        }
+
+        result = db.collection.update_one(query, update)
+
+        print('Update result: ', result.raw_result)  # Print raw result for detailed information
+        if result.matched_count > 0:
+            return jsonify(success=True)
+        else:
+            return jsonify(success=False, error="Thread not found")
+
+    except Exception as e:
+        print('Error: ', e)
+        return jsonify(success=False, error=str(e))
 
 
 @app.route('/delete_message', methods=['POST'])
