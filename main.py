@@ -1,3 +1,6 @@
+
+
+
 from datetime import datetime
 import os
 from flask import Flask, request, jsonify, send_file
@@ -137,21 +140,38 @@ def process_input():
         'output': response['text_response'],
         'audioUrl': response['audio_response'],
         'timestamp': timestamp_dt.strftime("%Y-%m-%dT%H:%M:%S.%f"),
-        'isFavorite': False,
     }
-    existing_thread = db.collection.find_one({'threadId': threadId})
-    if existing_thread:
-        
-        db.collection.update_one({'threadId': threadId}, {'$push': {'messages': message_content}})
+
+    user = db.collection.find_one({'userId': userId})
+    if user:
+        thread = next((t for t in user['threads'] if t['threadId'] == threadId), None)
+        if thread:
+            db.collection.update_one(
+                {'userId': userId, 'threads.threadId': threadId},
+                {'$push': {'threads.$.messages': message_content}}
+            )
+        else:
+            threadName = threadSum(user_input)
+            new_thread = {
+                'threadId': threadId,
+                'threadName': threadName,
+                'messages': [message_content],
+            }
+            db.collection.update_one(
+                {'userId': userId},
+                {'$push': {'threads': new_thread}}
+            )
     else:
         threadName = threadSum(user_input)
-        thread = {
+        new_user = {
             'userId': userId,
-            'threadId': threadId,
-            'threadName': threadName,
-            'messages': [message_content],
+            'threads': [{
+                'threadId': threadId,
+                'threadName': threadName,
+                'messages': [message_content],
+            }]
         }
-        db.collection.insert_one(thread)
+        db.collection.insert_one(new_user)
 
     print('Received message with timestamp:', timestamp_dt)
     print(response)
@@ -165,23 +185,26 @@ def process_input():
 @app.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
 def get_messages(user_id, thread_id):
     print(f"Fetching messages for user_id: {user_id} and thread_id: {thread_id}")
-    thread = db.collection.find_one({"userId": user_id, "threadId": thread_id})
 
-    if thread:
-        messages = thread['messages']
-        thread_name = thread.get('threadName', 'Default Thread Name')  
+    user = db.collection.find_one({"userId": user_id})
+    
+    if user:
+        thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
 
-        print(f"Fetched messages: {messages}")
+        if thread:
+            messages = thread['messages']
+            thread_name = thread.get('threadName', 'Default Thread Name')  
 
-        return jsonify({
-            'messages': messages,
-            'threadName': thread_name  
-        })
+            print(f"Fetched messages: {messages}")
+
+            return jsonify({
+                'messages': messages,
+                'threadName': thread_name  
+            })
+        else:
+            return jsonify({"error": "Thread not found"}), 404  
     else:
-        return jsonify([])  
-
-
-
+        return jsonify({"error": "User not found"}), 404  
 
 
 
@@ -191,34 +214,74 @@ def get_threads(user_id):
         return jsonify({"error": "User ID is required"}), 400
 
     try:
-        threads_cursor = db.collection.find({"userId": user_id}, {"_id": 0, "threadId": 1, "threadName": 1})
+        user_document = db.collection.find_one({"userId": user_id}, {"_id": 0, "threads": 1})
 
-        threads = list(threads_cursor)
-        if threads:
-            distinct_threads = list({(x['threadId'], x['threadName']) for x in threads if 'threadId' in x and 'threadName' in x})
-            formatted_threads = [{"threadId": x[0], "threadName": x[1]} for x in distinct_threads]
-            print(f"formatted_threads {formatted_threads}")
-            return jsonify(formatted_threads), 200
+        if user_document and 'threads' in user_document:
+            threads = user_document['threads']
+            print(f"threads {threads}")
+            formatted_threads = [
+                {"threadId": thread['threadId'], "threadName": thread['threadName']} 
+                for thread in threads if 'threadId' in thread and 'threadName' in thread 
+            ]
+
+            if formatted_threads:
+                return jsonify(formatted_threads), 200
+            else:
+                return jsonify({"message": "No threads found for the given user ID"}), 404
         else:
-            return jsonify({"message": "No threads found for the given user ID"}), 404
+            return jsonify({"message": "No user found with the given user ID or the user has no threads"}), 404
     except Exception as e:
         print(e)
         return jsonify({"error": "An error occurred while fetching the threads"}), 500
 
 
+@app.route('/delete_message', methods=['POST'])
+def delete_message():
+    data = request.json
+    user_id = data.get('userId')
+    thread_id = data.get('threadId')
+    index = data.get('index')  # get index of the message to be deleted
 
-@app.route('/delete-audios', methods=['DELETE'])
-def delete_audios():
+    if not user_id or not thread_id or index is None:
+        return jsonify({'error': 'Missing required parameters'}), 400
+
     try:
-        audio_directory = '.'  
-        for filename in os.listdir(audio_directory):
-            if filename.endswith('.mp3'):
-                file_path = os.path.join(audio_directory, filename)
-                os.remove(file_path)
-        return jsonify({"message": "All audio files deleted successfully"}), 200
+        user = db.collection.find_one({'userId': user_id})
+        
+        if user:
+            thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
+            
+            if thread and 0 <= index < len(thread['messages']):
+                # Remove the message at the specified index
+                del thread['messages'][index]
+
+                # Update the MongoDB document
+                db.collection.update_one(
+                    {'userId': user_id},
+                    {'$set': {'threads': user['threads']}}
+                )
+                
+                return jsonify({'success': True}), 200
+            else:
+                return jsonify({'error': 'Index out of range or thread not found'}), 404
+        else:
+            return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         print(e)
-        return jsonify({"message": "An error occurred while deleting audio files"}), 500
+        return jsonify({'error': 'An error occurred while deleting the message'}), 500
+
+# @app.route('/delete-audios', methods=['DELETE'])
+# def delete_audios():
+#     try:
+#         audio_directory = '.'  
+#         for filename in os.listdir(audio_directory):
+#             if filename.endswith('.mp3'):
+#                 file_path = os.path.join(audio_directory, filename)
+#                 os.remove(file_path)
+#         return jsonify({"message": "All audio files deleted successfully"}), 200
+#     except Exception as e:
+#         print(e)
+#         return jsonify({"message": "An error occurred while deleting audio files"}), 500
     
 # @app.route('/update-favorite', methods=['POST'])
 # def update_favorite():
