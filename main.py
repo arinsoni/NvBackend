@@ -331,21 +331,25 @@ def delete_thread():
     data = request.json
     user_id = data.get('userId')
     thread_id = data.get('threadId')
-    
+
     if not user_id or not thread_id:
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        result = db.collection.delete_one({'userId': user_id, 'threads.threadId': thread_id})
-        print(f"in delete {thread_id}")
-        
-        if result.deleted_count > 0:
+        result = db.collection.update_one(
+            {'userId': user_id}, 
+            {'$pull': {'threads': {'threadId': thread_id}}}
+        )
+        print(f"Thread {thread_id} deleted.")
+
+        if result.matched_count > 0:
             return jsonify({'success': True}), 200
         else:
             return jsonify({'error': 'Thread not found'}), 404
     except Exception as e:
         print(e)
-        return jsonify({'error': 'An error occurred while deleting the thread'}), 500    
+        return jsonify({'error': 'An error occurred while deleting the thread'}), 500
+
 
 # @app.route('/delete-audios', methods=['DELETE'])
 # def delete_audios():
