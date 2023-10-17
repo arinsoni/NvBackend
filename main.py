@@ -156,6 +156,7 @@ def process_input():
                 'threadId': threadId,
                 'threadName': threadName,
                 'messages': [message_content],
+                'isFavorite': False,
             }
             db.collection.update_one(
                 {'userId': userId},
@@ -221,10 +222,22 @@ def get_threads(user_id):
         if user_document and 'threads' in user_document:
             threads = user_document['threads']
             print(f"threads {threads}")
-            formatted_threads = [
-    {"threadId": thread['threadId'], "threadName": thread['threadName'], "isFavorite": thread['isFavorite'] } 
-    for thread in threads if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread
-]
+            formatted_threads = []
+            for thread in threads:
+                print("Processing Thread:", thread)
+                if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread:
+                    formatted_thread = {
+                        "threadId": thread['threadId'],
+                        "threadName": thread['threadName'],
+                        "isFavorite": thread['isFavorite']
+                    }
+                    formatted_threads.append(formatted_thread)
+                    print("Added Thread:", formatted_thread)
+                else:
+                    print("Thread Skipped")
+
+            
+            print(f"formatted_threads: {formatted_threads}")
 
 
             if formatted_threads:
@@ -309,6 +322,30 @@ def delete_message():
     except Exception as e:
         print(e)
         return jsonify({'error': 'An error occurred while deleting the message'}), 500
+    
+
+
+
+@app.route('/delete_thread', methods=['POST'])
+def delete_thread():
+    data = request.json
+    user_id = data.get('userId')
+    thread_id = data.get('threadId')
+    
+    if not user_id or not thread_id:
+        return jsonify({'error': 'Missing required parameters'}), 400
+
+    try:
+        result = db.collection.delete_one({'userId': user_id, 'threads.threadId': thread_id})
+        print(f"in delete {thread_id}")
+        
+        if result.deleted_count > 0:
+            return jsonify({'success': True}), 200
+        else:
+            return jsonify({'error': 'Thread not found'}), 404
+    except Exception as e:
+        print(e)
+        return jsonify({'error': 'An error occurred while deleting the thread'}), 500    
 
 # @app.route('/delete-audios', methods=['DELETE'])
 # def delete_audios():
