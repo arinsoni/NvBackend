@@ -5,13 +5,12 @@ from datetime import datetime
 import os
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import safe_join
-import uuid  
 from elevenlabs import set_api_key
 from elevenlabs import Voice, VoiceSettings, generate, save
 import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
-from pymongo import MongoClient, UpdateOne
+from pymongo import MongoClient
 
 app = Flask(__name__)
 CORS(app, resources={
