@@ -1,6 +1,3 @@
-
-
-
 from datetime import datetime
 import os
 from flask import Flask, request, jsonify, send_file
@@ -25,7 +22,7 @@ load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 
 
-openai.api_key = os.environ.get('OPENAI_API_KEY')
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 set_api_key(ElevenLabsKey)
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
