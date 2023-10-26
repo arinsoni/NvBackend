@@ -9,8 +9,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-app = Flask(__name__)
-CORS(app, resources={
+application = Flask(__name__)
+CORS(application, resources={
     r"/process_query": {"origins": "*"}, 
     r"/delete-audios": {"origins": "*"},
     r"/get_messages/*": {"origins": "http://127.0.0.1:5000"}
@@ -100,7 +100,7 @@ def threadSum(txt):
     return threadName
 
 
-@app.route('/audio/<filename>', methods=['GET'])
+@application.route('/audio/<filename>', methods=['GET'])
 def serve_audio(filename):
     audio_directory = '.'  
     file_path = safe_join(audio_directory, filename)  
@@ -112,7 +112,7 @@ def serve_audio(filename):
     
 
 
-@app.route('/process_query', methods=['POST'])
+@application.route('/process_query', methods=['POST'])
 def process_input():
     data = request.json
     user_input = data['user_input']
@@ -181,7 +181,7 @@ def process_input():
 
 
 
-@app.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
+@application.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
 def get_messages(user_id, thread_id):
     print(f"Fetching messages for user_id: {user_id} and thread_id: {thread_id}")
 
@@ -207,7 +207,7 @@ def get_messages(user_id, thread_id):
 
 
 
-@app.route('/get_threads/<user_id>', methods=['GET'])
+@application.route('/get_threads/<user_id>', methods=['GET'])
 def get_threads(user_id):
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
@@ -227,7 +227,7 @@ def get_threads(user_id):
                         "threadName": thread['threadName'],
                         "isFavorite": thread['isFavorite']
                     }
-                    formatted_threads.append(formatted_thread)
+                    formatted_threads.applicationend(formatted_thread)
                     print("Added Thread:", formatted_thread)
                 else:
                     print("Thread Skipped")
@@ -246,7 +246,7 @@ def get_threads(user_id):
         print(e)
         return jsonify({"error": "An error occurred while fetching the threads"}), 500
 
-@app.route('/update-favorite-thread', methods=['POST'])
+@application.route('/update-favorite-thread', methods=['POST'])
 def update_favorite_thread():
     try:
         data = request.json
@@ -284,7 +284,7 @@ def update_favorite_thread():
         return jsonify(success=False, error=str(e))
 
 
-@app.route('/delete_message', methods=['POST'])
+@application.route('/delete_message', methods=['POST'])
 def delete_message():
     data = request.json
     user_id = data.get('userId')
@@ -322,7 +322,7 @@ def delete_message():
 
 
 
-@app.route('/delete_thread', methods=['POST'])
+@application.route('/delete_thread', methods=['POST'])
 def delete_thread():
     data = request.json
     user_id = data.get('userId')
@@ -347,7 +347,7 @@ def delete_thread():
         return jsonify({'error': 'An error occurred while deleting the thread'}), 500
 
 
-# @app.route('/delete-audios', methods=['DELETE'])
+# @application.route('/delete-audios', methods=['DELETE'])
 # def delete_audios():
 #     try:
 #         audio_directory = '.'  
@@ -360,7 +360,7 @@ def delete_thread():
 #         print(e)
 #         return jsonify({"message": "An error occurred while deleting audio files"}), 500
     
-# @app.route('/update-favorite', methods=['POST'])
+# @application.route('/update-favorite', methods=['POST'])
 # def update_favorite():
 #     try:
 #         data = request.json
@@ -388,4 +388,4 @@ def delete_thread():
 
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    application.run(host='0.0.0.0', port=5000)
