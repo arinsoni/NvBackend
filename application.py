@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+import uuid
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import safe_join
 from elevenlabs import set_api_key
@@ -8,6 +9,9 @@ import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from celery import Celery
+
+celery = Celery('myapp', broker='redis://localhost:6379/0')
 
 application = Flask(__name__)
 CORS(application, resources={
@@ -22,8 +26,8 @@ load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 
 
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-set_api_key(ElevenLabsKey)
+openai.api_key = "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"
+set_api_key("82a290bde21d59052827f6d2fc1e949f")
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
 db = client.nvdata
@@ -36,7 +40,7 @@ def getVoice(text, id):
     audio = generate(
         text,
         voice=Voice(
-            voice_id='PzgV69yst4xP66RXGTSL',
+            voice_id='wOgkbJGGYoE5gYRTT9s4',
             settings=VoiceSettings(stability=0.35, similarity_boost=0.93, style=0.48, use_speaker_boost=True)
         ),
         model="eleven_multilingual_v2",
@@ -71,33 +75,16 @@ def motivation(user_input):
         stop=None
     )
     gpt_ans = response.choices[0].message.content
-    print("text genereted")
     return gpt_ans
 
+def truncate_string(text, max_words=100):
+    words = text.split()
+    truncated_words = words[:max_words]
+    truncated_text = ' '.join(truncated_words)
+    if len(words) > max_words:
+        truncated_text += ' ...'
+    return truncated_text
 
-
-def threadSum(txt):
-    print(f"summarizing...{txt}")
-    messages = [
-            {
-                "role": "system",
-                "content": f"summarize {txt}in less than 8 words "
-            },
-            {
-                "role": "user",
-                "content": txt
-            }
-        ]
-
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo", 
-        messages=messages,
-        temperature=0,
-        max_tokens=50  
-    )
-
-    threadName = response['choices'][0]['message']['content'].strip()
-    return threadName
 
 
 @application.route('/audio/<filename>', methods=['GET'])
@@ -111,21 +98,21 @@ def serve_audio(filename):
         return "File not found", 404
     
 
-
-@application.route('/process_query', methods=['POST'])
-def process_input():
+@application.route('/<user_id>/process_query', methods=['POST'])
+def process_input(user_id):
     data = request.json
     user_input = data['user_input']
     userId = data['userId']  
+    unique_id = str(uuid.uuid4())
     threadId = data['threadId'] 
     isFirstMessageSent = data['isFirstMessageSent']
     gpt_ans = motivation(user_input)
-    audio_file_name = getVoice(gpt_ans, userId)
+    audio_file_name = getVoice(gpt_ans, unique_id)
 
     timestamp_dt = datetime.strptime(data['timestamp'], "%Y-%m-%dT%H:%M:%S.%f")
    
     print(f"isFirstMessageSent: {isFirstMessageSent}")
-
+    
     response = {
         'text_response': gpt_ans,
         'audio_response': request.url_root + 'audio/' + audio_file_name,
@@ -147,7 +134,7 @@ def process_input():
                 {'$push': {'threads.$.messages': message_content}}
             )
         else:
-            threadName = threadSum(user_input)
+            threadName = truncate_string(user_input)
             new_thread = {
                 'threadId': threadId,
                 'threadName': threadName,
@@ -159,7 +146,7 @@ def process_input():
                 {'$push': {'threads': new_thread}}
             )
     else:
-        threadName = threadSum(user_input)
+        threadName = truncate_string(user_input)
         new_user = {
             'userId': userId,
             'threads': [{
@@ -207,13 +194,20 @@ def get_messages(user_id, thread_id):
 
 
 
-@application.route('/get_threads/<user_id>', methods=['GET'])
+@application.route('/<user_id>/get_threads', methods=['GET'])
 def get_threads(user_id):
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
 
     try:
+        print("in get threads fun")
         user_document = db.collection.find_one({"userId": user_id}, {"_id": 0, "threads": 1})
+        print(user_document)
+
+        if not user_document:
+            print("nahi hai")
+            db.collection.insert_one({"userId": user_id, "threads": []})
+            return jsonify([]), 200  
 
         if user_document and 'threads' in user_document:
             threads = user_document['threads']
@@ -221,13 +215,19 @@ def get_threads(user_id):
             formatted_threads = []
             for thread in threads:
                 print("Processing Thread:", thread)
-                if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread:
+                if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread and 'messages' in thread:
+                    lastMessageTimestamp = thread['messages'][-1]['timestamp'] if thread['messages'] else None
+                    msg = thread['messages'][-1]['input']
+
                     formatted_thread = {
                         "threadId": thread['threadId'],
                         "threadName": thread['threadName'],
-                        "isFavorite": thread['isFavorite']
+                        "isFavorite": thread['isFavorite'],
+                        "lastMessageTimestamp": lastMessageTimestamp,
+                        "msg": msg
+                        
                     }
-                    formatted_threads.applicationend(formatted_thread)
+                    formatted_threads.append(formatted_thread)
                     print("Added Thread:", formatted_thread)
                 else:
                     print("Thread Skipped")
@@ -273,7 +273,7 @@ def update_favorite_thread():
 
         result = db.collection.update_one(query, update)
 
-        print('Update result: ', result.raw_result)  # Print raw result for detailed information
+        print('Update result: ', result.raw_result)  
         if result.matched_count > 0:
             return jsonify(success=True)
         else:
@@ -345,43 +345,6 @@ def delete_thread():
     except Exception as e:
         print(e)
         return jsonify({'error': 'An error occurred while deleting the thread'}), 500
-
-
-# @application.route('/delete-audios', methods=['DELETE'])
-# def delete_audios():
-#     try:
-#         audio_directory = '.'  
-#         for filename in os.listdir(audio_directory):
-#             if filename.endswith('.mp3'):
-#                 file_path = os.path.join(audio_directory, filename)
-#                 os.remove(file_path)
-#         return jsonify({"message": "All audio files deleted successfully"}), 200
-#     except Exception as e:
-#         print(e)
-#         return jsonify({"message": "An error occurred while deleting audio files"}), 500
-    
-# @application.route('/update-favorite', methods=['POST'])
-# def update_favorite():
-#     try:
-#         data = request.json
-#         print('Received data: ', data)  
-#         message = data['message']
-#         is_favorite = data['isFavorite']
-
-#         result = db.collection.update_one(
-#             {"message.input": message['input'], "message.output": message['output']},
-#             {"$set": {"message.isFavorite": is_favorite}}
-#         )
-        
-#         print('Update result: ', result.raw_result)  
-#         if result.matched_count > 0:
-#             return jsonify(success=True)
-#         else:
-#             return jsonify(success=False, error="Message not found")
-
-#     except Exception as e:
-#         print('Error: ', e)
-#         return jsonify(success=False, error=str(e))
 
 
 
