@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import uuid
 from flask import Flask, request, jsonify, send_file
@@ -9,9 +10,8 @@ import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from celery import Celery
 
-celery = Celery('myapp', broker='redis://localhost:6379/0')
+
 
 application = Flask(__name__)
 CORS(application, resources={
@@ -26,7 +26,7 @@ load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 
 
-openai.api_key = "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"
+openai.api_key = "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"
 set_api_key("82a290bde21d59052827f6d2fc1e949f")
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
@@ -37,6 +37,7 @@ collection = db.collection
 
 def getVoice(text, id):
     print(f"audio generating... ")
+    # print(f"audio of {text}")
     audio = generate(
         text,
         voice=Voice(
@@ -51,31 +52,13 @@ def getVoice(text, id):
     audio_file = f'audio{id}.mp3'
     return audio_file
 
-
-def motivation(user_input):
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to help students and answer their queries. Language: Hinglish"
-        },
-        {
-            "role": "user",
-            "content": user_input
-        }
-    ]
-    print("text output generating...")
-    response = openai.ChatCompletion.create(
-        model="ft:gpt-3.5-turbo-0613:personal::866dUQhT",
-        messages=messages,
-        temperature=0.5,
-        top_p=0.9,
-        frequency_penalty=0,
-        presence_penalty=0,
-        stop=None
-    )
-    gpt_ans = response.choices[0].message.content
-    return gpt_ans
+def get_past_messages(user_id, thread_id):
+    user = db.collection.find_one({"userId": user_id})
+    if user:
+        thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
+        if thread:
+            return thread['messages']
+    return []
 
 def truncate_string(text, max_words=100):
     words = text.split()
@@ -98,6 +81,43 @@ def serve_audio(filename):
         return "File not found", 404
     
 
+
+
+
+def motivation(user_input, threadId, userId, messages):
+    
+    # Insert the system message at the start of the messages list
+    system_message = {
+        "role": "system",
+        "content": "You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to help students and answer their queries. Also Remember the previous messages and use them to generate context-aware responses. Language: Hinglish"
+    }
+    messages.insert(0, system_message)
+    
+    # Add the current user message to the messages list
+    messages.append({"role": "user", "content": user_input})
+
+    # print(json.dumps(messages, indent=4, ensure_ascii=False))
+    print("text output generating...")
+
+    response = openai.ChatCompletion.create(
+        model="ft:gpt-3.5-turbo-0613:personal::866dUQhT",
+        messages=messages,
+        temperature=0.5,
+        top_p=0.9,
+        frequency_penalty=0,
+        presence_penalty=0,
+        stop=None
+    )
+
+    gpt_ans = response.choices[0].message.content
+
+    return gpt_ans
+
+
+# Processs query
+
+
+
 @application.route('/<user_id>/process_query', methods=['POST'])
 def process_input(user_id):
     data = request.json
@@ -106,17 +126,45 @@ def process_input(user_id):
     unique_id = str(uuid.uuid4())
     threadId = data['threadId'] 
     isFirstMessageSent = data['isFirstMessageSent']
-    gpt_ans = motivation(user_input)
+
+    user = db.collection.find_one({'userId': userId})
+
+    if user:
+        thread = next((t for t in user['threads'] if t['threadId'] == threadId), None)
+        if thread:
+            messages = thread['messages'][-10:]  
+        else:
+            messages = []
+    else:
+        messages = []
+
+    cleaned_messages = []
+    
+    for m in messages:
+        if 'input' in m:
+            cleaned_messages.append({'role': 'user', 'content': m['input']})
+        if 'output' in m:
+            cleaned_messages.append({'role': 'assistant', 'content': m['output']})
+
+
+
+    # gpt_ans = motivation(user_input)
+    gpt_ans = motivation(user_input, threadId, userId, cleaned_messages)
+
+    
+
     audio_file_name = getVoice(gpt_ans, unique_id)
 
     timestamp_dt = datetime.strptime(data['timestamp'], "%Y-%m-%dT%H:%M:%S.%f")
    
-    print(f"isFirstMessageSent: {isFirstMessageSent}")
+    # print(f"isFirstMessageSent: {isFirstMessageSent}")
     
     response = {
         'text_response': gpt_ans,
         'audio_response': request.url_root + 'audio/' + audio_file_name,
     }
+
+
    
     message_content = {
         'input': user_input,
@@ -159,8 +207,8 @@ def process_input(user_id):
         }
         db.collection.insert_one(new_user)
 
-    print('Received message with timestamp:', timestamp_dt)
-    print(response)
+    # print('Received message with timestamp:', timestamp_dt)
+    # print(response)
 
     return jsonify(response)
 
@@ -181,7 +229,7 @@ def get_messages(user_id, thread_id):
             messages = thread['messages']
             thread_name = thread.get('threadName', 'Default Thread Name')  
 
-            print(f"Fetched messages: {messages}")
+            # print(f"Fetched messages: {messages}")
 
             return jsonify({
                 'messages': messages,
@@ -200,21 +248,21 @@ def get_threads(user_id):
         return jsonify({"error": "User ID is required"}), 400
 
     try:
-        print("in get threads fun")
+        # print("in get threads fun")
         user_document = db.collection.find_one({"userId": user_id}, {"_id": 0, "threads": 1})
-        print(user_document)
+        # print(user_document)
 
         if not user_document:
-            print("nahi hai")
+            # print("nahi hai")
             db.collection.insert_one({"userId": user_id, "threads": []})
             return jsonify([]), 200  
 
         if user_document and 'threads' in user_document:
             threads = user_document['threads']
-            print(f"threads {threads}")
+            # print(f"threads {threads}")
             formatted_threads = []
             for thread in threads:
-                print("Processing Thread:", thread)
+                # print("Processing Thread:", thread)
                 if 'threadId' in thread and 'threadName' in thread and 'isFavorite' in thread and 'messages' in thread:
                     lastMessageTimestamp = thread['messages'][-1]['timestamp'] if thread['messages'] else None
                     msg = thread['messages'][-1]['input']
@@ -228,12 +276,12 @@ def get_threads(user_id):
                         
                     }
                     formatted_threads.append(formatted_thread)
-                    print("Added Thread:", formatted_thread)
+                    # print("Added Thread:", formatted_thread)
                 else:
                     print("Thread Skipped")
 
             
-            print(f"formatted_threads: {formatted_threads}")
+            # print(f"formatted_threads: {formatted_threads}")
 
 
             if formatted_threads:
@@ -250,7 +298,7 @@ def get_threads(user_id):
 def update_favorite_thread():
     try:
         data = request.json
-        print('Received data: ', data)
+        # print('Received data: ', data)
 
         required_fields = ['userId', 'threadId', 'isFavorite']
         if not all(field in data for field in required_fields):
@@ -273,7 +321,7 @@ def update_favorite_thread():
 
         result = db.collection.update_one(query, update)
 
-        print('Update result: ', result.raw_result)  
+        # print('Update result: ', result.raw_result)  
         if result.matched_count > 0:
             return jsonify(success=True)
         else:
@@ -289,7 +337,7 @@ def delete_message():
     data = request.json
     user_id = data.get('userId')
     thread_id = data.get('threadId')
-    index = data.get('index')  # get index of the message to be deleted
+    index = data.get('index')  
 
     if not user_id or not thread_id or index is None:
         return jsonify({'error': 'Missing required parameters'}), 400
@@ -302,9 +350,13 @@ def delete_message():
             
             if thread and 0 <= index < len(thread['messages']):
                 # Remove the message at the specified index
-                del thread['messages'][index]
+                # print(f"before delete debug {json.dumps(user['threads'], indent=4, ensure_ascii=False)}")
+                print(thread['messages'][len(thread['messages'])-1])
+                del thread['messages'][len(thread['messages'])-1]
 
-                # Update the MongoDB document
+
+                print(f"after delete debug {json.dumps(user['threads'], indent=4, ensure_ascii=False)}")
+
                 db.collection.update_one(
                     {'userId': user_id},
                     {'$set': {'threads': user['threads']}}
@@ -336,7 +388,7 @@ def delete_thread():
             {'userId': user_id}, 
             {'$pull': {'threads': {'threadId': thread_id}}}
         )
-        print(f"Thread {thread_id} deleted.")
+        # print(f"Thread {thread_id} deleted.")
 
         if result.matched_count > 0:
             return jsonify({'success': True}), 200
