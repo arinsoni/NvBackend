@@ -24,10 +24,11 @@ CORS(application, resources={
 
 load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
+openaiAPI = os.environ.get("OPENAI_API_KEY")
 
 
-openai.api_key = "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"
-set_api_key("82a290bde21d59052827f6d2fc1e949f")
+openai.api_key = openaiAPI
+set_api_key(ElevenLabsKey)
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
 db = client.nvdata
@@ -86,14 +87,12 @@ def serve_audio(filename):
 
 def motivation(user_input, threadId, userId, messages):
     
-    # Insert the system message at the start of the messages list
     system_message = {
         "role": "system",
         "content": "You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to help students and answer their queries. Also Remember the previous messages and use them to generate context-aware responses. Language: Hinglish"
     }
     messages.insert(0, system_message)
     
-    # Add the current user message to the messages list
     messages.append({"role": "user", "content": user_input})
 
     # print(json.dumps(messages, indent=4, ensure_ascii=False))
