@@ -53,36 +53,6 @@ def getVoice(text, id):
     audio_file = f'audio{id}.mp3'
     return audio_file
 
-def get_past_messages(user_id, thread_id):
-    user = db.collection.find_one({"userId": user_id})
-    if user:
-        thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
-        if thread:
-            return thread['messages']
-    return []
-
-def truncate_string(text, max_words=100):
-    words = text.split()
-    truncated_words = words[:max_words]
-    truncated_text = ' '.join(truncated_words)
-    if len(words) > max_words:
-        truncated_text += ' ...'
-    return truncated_text
-
-
-
-@application.route('/audio/<filename>', methods=['GET'])
-def serve_audio(filename):
-    audio_directory = '.'  
-    file_path = safe_join(audio_directory, filename)  
-
-    if os.path.isfile(file_path):
-        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
-    else:
-        return "File not found", 404
-    
-
-
 
 
 def motivation(user_input, threadId, userId, messages):
@@ -113,7 +83,25 @@ def motivation(user_input, threadId, userId, messages):
     return gpt_ans
 
 
-# Processs query
+def truncate_string(text, max_words=100):
+    words = text.split()
+    truncated_words = words[:max_words]
+    truncated_text = ' '.join(truncated_words)
+    if len(words) > max_words:
+        truncated_text += ' ...'
+    return truncated_text
+
+
+
+@application.route('/audio/<filename>', methods=['GET'])
+def serve_audio(filename):
+    audio_directory = '.'  
+    file_path = safe_join(audio_directory, filename)  
+
+    if os.path.isfile(file_path):
+        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
+    else:
+        return "File not found", 404
 
 
 
