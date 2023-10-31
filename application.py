@@ -10,6 +10,7 @@ import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
+import re
 
 
 
@@ -17,22 +18,148 @@ application = Flask(__name__)
 CORS(application, resources={
     r"/process_query": {"origins": "*"}, 
     r"/delete-audios": {"origins": "*"},
-    r"/get_messages/*": {"origins": "http://127.0.0.1:5000"}
+    r"/get_messages/*": {"origins": "*"}
     })
 
 
 
 load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
-openaiAPI = os.environ.get("OPENAI_API_KEY")
+OpenaiAPIKey = os.environ.get("OPENAI_API_KEY")
 
 
-openai.api_key = openaiAPI
-set_api_key(ElevenLabsKey)
+openai.api_key = ElevenLabsKey
+set_api_key(OpenaiAPIKey)
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
 db = client.nvdata
 collection = db.collection
+
+
+#  check
+mod_q_prompt = """You are chatbot moderator and assistant. You'll be given a question(Q). You need to evaluate it on coherency, completeness and accuracy.
+Context: The questions are asked by students aspiring for JEE/NEET examinations. Also Remember the previous messages and use them to generate context-aware responses
+Steps to follow:
+ 1. Understand the question and evaluate Q on by answering below:
+    i. Does the question require more information or context to answer?
+    ii. Is the question sensitive or controversial? (such questions might be incorrect)
+ 2. If query is a difficult question, provide a few short hints outlining the answer. In case of incomplete info, ask for further info.
+Language: English
+Syntax:
+Evaluate Q: <question-evaluation>
+Hint: <prompt/none>"""
+
+mod_a_prompt = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
+Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses
+Steps to follow:
+ 1. Check the Answer. In case of incomplete info, chatbot must ask for further info.:
+    i. Is the A helpful to the student?
+    ii. Is the tone empathetic?
+    iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
+ 2. if Q is not a question, answer should continue the conversation.
+ 3. Score the answer between 0 and 10 points.
+Language: English 
+Input: Hinglish
+Syntax:
+Analysis of A: <analysis>
+Score: <0-10>"""
+
+
+def get_hint(q, messages):
+    eval = gpt_history(f"{q}", mod_q_prompt, messages, temp=1)
+    if "Hint:" in eval:
+      eval, hint = eval.split("Hint:")
+    else:
+      hint = ""
+    return eval, hint
+
+def gpt_history(txt, sys_prompt, messages, model="gpt-3.5-turbo", temp=0.7):
+    messages.append({
+        'role': "user",
+        'content': txt
+    })
+    messages.insert(0, {
+        'role': 'system',
+        'content': sys_prompt
+    })
+
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=temp,
+        top_p=0.9,
+        frequency_penalty=0.4,
+        presence_penalty=0.3,
+        stop=None
+    )
+    res = response.choices[0].message.content
+    return res
+
+def eval_a(QA, hint, messages):
+    q = QA[0]
+    a = QA[1]
+    if len(hint.strip()) and hint.lower().strip() != "none":
+        eval = gpt_history(f"Q: {q}\nOutline: {hint}\nA: {a} Analysis of A: ", mod_a_prompt, messages, temp=1)
+    else:
+        eval = gpt_history(f"{q}\n{a}", mod_a_prompt, messages, temp=1)
+
+    if "Score:" in eval:
+      eval, score = eval.split("Score:")
+    else:
+      score = "-1"
+
+    if '/' in score:
+      score = float(score.strip().split('/')[0])
+    else:
+      score = float(score.strip())
+    return score, eval
+
+
+def motivation(user_input, messages):
+    
+    print("user input: ", user_input)
+    
+    # Insert the system message at the start of the messages list
+    system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.Also Remember the previous messages and use them to generate context-aware responses
+        
+    Language: Hinglish
+    Study Language: English
+    Syntax:
+    Q: <question>
+    Hint: <optional>
+    A: <answer>"""
+
+    
+    
+    # Add the current user message to the messages list
+    q_analysis, hint = get_hint(f"Q: {user_input}", messages.copy())
+    # messages.append({"role": "user", "content": f"Q: {user_input}\nHint: {hint}"})
+
+    # print(json.dumps(messages, indent=4, ensure_ascii=False))
+    print("text output generating...")
+    # print(f"Q: {q}")
+    
+    print(q_analysis, f"\nhint: {hint}\n")
+    if len(hint.strip()) and hint.lower().strip() != "none":
+        a = gpt_history(f"Q: {user_input}\nHint: {hint}", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+    else:
+        a = gpt_history(f"Q: {user_input}", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+    print(f"answer with hint: {a}")
+    score, eval = eval_a([user_input,a], hint, messages.copy())
+    print(score, eval)
+    if score <= 7:
+        a = gpt_history(f"Q: {user_input}", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+        print(f"answer without hint: {a}")
+    
+    if(a.startswith('A:') ):
+        a = a[2:].strip()
+    if(a.startswith('Hint:') ):
+        a = a[5:].strip()
+    print("got final answer")
+    print("------------------------------------------------------------------------------------------")
+    # print("messages " , messages)
+
+    return a
 
 
 
@@ -55,55 +182,6 @@ def getVoice(text, id):
 
 
 
-def motivation(user_input, threadId, userId, messages):
-    
-    system_message = {
-        "role": "system",
-        "content": "You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to help students and answer their queries. Also Remember the previous messages and use them to generate context-aware responses. Language: Hinglish"
-    }
-    messages.insert(0, system_message)
-    
-    messages.append({"role": "user", "content": user_input})
-
-    # print(json.dumps(messages, indent=4, ensure_ascii=False))
-    print("text output generating...")
-
-    response = openai.ChatCompletion.create(
-        model="ft:gpt-3.5-turbo-0613:personal::866dUQhT",
-        messages=messages,
-        temperature=0.5,
-        top_p=0.9,
-        frequency_penalty=0,
-        presence_penalty=0,
-        stop=None
-    )
-
-    gpt_ans = response.choices[0].message.content
-
-    return gpt_ans
-
-
-def truncate_string(text, max_words=100):
-    words = text.split()
-    truncated_words = words[:max_words]
-    truncated_text = ' '.join(truncated_words)
-    if len(words) > max_words:
-        truncated_text += ' ...'
-    return truncated_text
-
-
-
-@application.route('/audio/<filename>', methods=['GET'])
-def serve_audio(filename):
-    audio_directory = '.'  
-    file_path = safe_join(audio_directory, filename)  
-
-    if os.path.isfile(file_path):
-        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
-    else:
-        return "File not found", 404
-
-
 
 @application.route('/<user_id>/process_query', methods=['POST'])
 def process_input(user_id):
@@ -115,6 +193,7 @@ def process_input(user_id):
     isFirstMessageSent = data['isFirstMessageSent']
 
     user = db.collection.find_one({'userId': userId})
+    print("userId  = "  + userId + ' threadId = ' + threadId  + " ------------------------------------------------------------------------------------------" )
 
     if user:
         thread = next((t for t in user['threads'] if t['threadId'] == threadId), None)
@@ -126,6 +205,7 @@ def process_input(user_id):
         messages = []
 
     cleaned_messages = []
+    print("start")
     
     for m in messages:
         if 'input' in m:
@@ -133,11 +213,13 @@ def process_input(user_id):
         if 'output' in m:
             cleaned_messages.append({'role': 'assistant', 'content': m['output']})
 
-
+    print("end")
 
     # gpt_ans = motivation(user_input)
-    gpt_ans = motivation(user_input, threadId, userId, cleaned_messages)
+    gpt_ans = motivation(user_input, cleaned_messages)
 
+    
+# 
     
 
     audio_file_name = getVoice(gpt_ans, unique_id)
@@ -201,7 +283,26 @@ def process_input(user_id):
 
 
 
+def truncate_string(text, max_words=100):
+    words = text.split()
+    truncated_words = words[:max_words]
+    truncated_text = ' '.join(truncated_words)
+    if len(words) > max_words:
+        truncated_text += ' ...'
+    return truncated_text
 
+
+
+@application.route('/audio/<filename>', methods=['GET'])
+def serve_audio(filename):
+    audio_directory = '.'  
+    file_path = safe_join(audio_directory, filename)  
+
+    if os.path.isfile(file_path):
+        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
+    else:
+        return "File not found", 404
+    
 
 @application.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
 def get_messages(user_id, thread_id):
@@ -274,12 +375,13 @@ def get_threads(user_id):
             if formatted_threads:
                 return jsonify(formatted_threads), 200
             else:
-                return jsonify({"message": "No threads found for the given user ID"}), 404
+                return jsonify({"message": "No threads found for the given user ID"}), 200
         else:
             return jsonify({"message": "No user found with the given user ID or the user has no threads"}), 404
     except Exception as e:
         print(e)
         return jsonify({"error": "An error occurred while fetching the threads"}), 500
+    
 
 @application.route('/update-favorite-thread', methods=['POST'])
 def update_favorite_thread():
