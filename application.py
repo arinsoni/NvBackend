@@ -25,14 +25,19 @@ CORS(application, resources={
 
 load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
+OpenAIAPIKey = os.environ.get("OPENAI_API_KEY")
+MongoDb = os.environ.get("MongoDb")
 
 
-openai.api_key = "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"
-set_api_key("82a290bde21d59052827f6d2fc1e949f")
+openai.api_key = OpenAIAPIKey
+set_api_key(ElevenLabsKey)
 
-client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
+client = MongoClient(MongoDb)
 db = client.nvdata
 collection = db.collection
+
+
+#  check
 
 
 #  check
@@ -41,44 +46,51 @@ collection = db.collection
 mod_q_prompt = """You are chatbot moderator and assistant. You'll be given a query(Q). You need to evaluate it on coherency, completeness and accuracy.
 Context: The questions are asked by students aspiring for JEE/NEET examinations. Motion is coaching Institute in Kota headed by Nitin Vijay (NV) Sir. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
- 1. Understand what the query is trying to ask or convey.
- 2. Classify question into following intents: Greeting, Personal, Conversational, Technical, Incomplete, Motion and Misc  
- 2. If query is a difficult question, provide a few short hints outlining the answer. In case of incomplete info, ask for further info.
-Language: Hinglish
-Example Intent classification: 
+ 1. Understand what the query is trying to ask or convey. Make sure to address any concerns of self-harm seriously.
+ 2. Classify question into following intents: Greeting, Personal, Conversational, Technical, Ambiguous, Motion and Misc
+ 2. If query is a difficult question, provide a few short hints in hinglish outlining the answer. (use pointers)
+Language: Hinglish (Hint should be in Hindi with technical/difficult terms in English)
+Example Intent classification:
 1. Intent: Greeting: "Hi Sir", "Good Evening", "Namaste, kaise hain aap?".
-2. Intent: Personal: Student's personal issues: "Sir padhai nahi ho rahi, kya karun?", "Sir depression aa raha hai".
-3. Intent Motion: "Motion achi institute hai kya", "Motion mai teachers kese recruit karte ho". 
+2. Intent: Personal: Student's personal issues/Self harm: "Sir padhai nahi ho rahi, kya karun?", "Sir depression aa raha hai".
 4. Intent Conversational: "ok", "thank you", "acha", "Mai theek hun".
-5. Intent Incomplete: question that require more information or context to answer: "swati mam kesi hai", "sir radhika ke kitne marks aaye".
+4. Intent Technical: "what is SHM?", "Disk ka MOI kya hota hai?" "metals ki property kya hoti hai?"
+5. Intent Ambiguous: question that require more information or context to answer: "swati mam kesi hai", "sir radhika ke kitne marks aaye".
+3. Intent Motion: "Motion achi institute hai kya", "Motion mai teachers kese recruit karte ho".
+
 Syntax:
-Understand Q: <question-understanding>
+Understand: <question-understanding>
 Intent: <intent>
 Hint: <prompt/none>
-Example:
 
+Example:
 Q: Sir swati mam kaisi hai?
 Understand Q: The user is asking about the well-being or opinion of Swati Mam. But no information about who is Swati mam is given.
-Intent: Incomplete
-Hint: Ask who is swati mam
+Intent: Ambiguous
+Hint: Swati mam kon hai?
+
+Q: Mujhe akelapan mehsoos hota hai
+Understand Q: The user feels lonely and want to find ways to deal with it
+Intent: Personal
+Hint: Dost banane ki tips do jaise activities aur clubs.
 """
 
 
 
 
 mod_default = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
-Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
+Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot.
+Note: Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer. In case of incomplete info, chatbot must ask for further info.:
     i. Is the A helpful to the student?
     ii. Is the tone empathetic?
     iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
  2. if Q is not a question, answer should continue the conversation.
- 3. Score the answer between 0 and 10 points.
-Language: English 
-Input: Hinglish
+ 3. Score the answer between 0 and 10 points. If answer is incomplete
+Language: Hinglish
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 mod_personal = """You are conversation quality evaluation and moderation agent. You'll be given a personal question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
@@ -89,10 +101,9 @@ Steps to follow:
     ii. Is the tone empathetic?
     iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
  3. Score the answer between 0 and 10 points.
-Language: English 
-Input: Hinglish
+Language: Hinglish
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 mod_conv = """You are conversation quality evaluation and moderation agent. You'll be given a query(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency and completeness.
@@ -102,10 +113,9 @@ Steps to follow:
     i. Is the tone empathetic?
     ii. Is the A is natural sounding?
  2. Score the answer between 0 and 10 points based on above analysis.
-Language: English 
-Input: Hinglish
+Language: Hinglish(mostly easy Hindi)
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 mod_technical = """You are conversation quality evaluation and moderation agent. You'll be given a technical question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
@@ -115,10 +125,9 @@ Steps to follow:
     i. Is the A helpful to the student?
     ii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
  3. Score the answer between 0 and 10 points.
-Language: English 
-Input: Hinglish
+Language: Hindi+English(Technical terms must be in english, other in hindi)
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 mod_motion = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A) pair regarding Motion institute, Kota whose founder is Nitin Vijay (NV) Sir. You might be provided with answer outline. You need to evaluate it on coherency, completeness and accuracy.
@@ -129,29 +138,29 @@ Steps to follow:
     ii. Is the tone empathetic?
     iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
  3. Score the answer between 0 and 10 points.
-Language: English 
-Input: Hinglish
+Language: Hinglish
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 mod_incomplete = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A). You might be provided with answer outline. The question(Q) requires further information, answer should ask for further information.
+Make sure the answer does not assume information on its own. It should ask for context when required.
 Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer.
     i. Is the tone empathetic?
     ii. Is A answer asking for the correct information for the query? If outline is provided, does the Answer cover points from the outline?
  2. Score the answer between 0 and 10 points.
-Language: English 
-Input: Hinglish
+Language: Hinglish
 Syntax:
-Analysis of A: <analysis>
+Analysis: <analysis>
 Score: <0-10>"""
 
 
 
 mod_a_strict = """"You are chatbot moderation agent. You are supposed to do language moderation.
 Ensure that the language of text is appropriate for students. Only if inappropriate words are used in the text, flag the text as "Appropriate: no"
+Ensure text is not racist/misogynistic and doesn't promote any forms of self harm.
 Syntax:
 Appropriate: <yes/no>"""
 
@@ -159,13 +168,13 @@ Appropriate: <yes/no>"""
 def get_hint(q, messages):
     eval = gpt_history(f"{q}", mod_q_prompt, messages, temp=1)
     if "Hint:" in eval:
-      eval, hint = eval.split("Hint:")
+      eval, hint = eval.split("Hint:")[:2]
       if hint.lower().strip() == "none":
         hint = ""
     else:
       hint = ""
     if "Intent:" in eval:
-      eval, intent = eval.split("Intent:")
+      eval, intent = eval.split("Intent:")[:2]
       if intent.lower().strip() == "none":
         intent = ""
       else:
@@ -203,12 +212,12 @@ def eval_a(QA, hint, mod_a_prompt, messages):
     if mod_a_prompt is None:
         return 10, ""
     if len(hint.strip()) and hint.lower().strip() != "none":
-        eval = gpt_history(f"Q: {q}\nOutline: {hint}\nA: {a} Analysis of A: ", mod_a_prompt, messages, temp=1)
+        eval = gpt_history(f"Q: {q}\nOutline: {hint}\nA: {a}\nAnalysis: ", mod_a_prompt, messages, temp=1)
     else:
-        eval = gpt_history(f"{q}\n{a}", mod_a_prompt, messages, temp=1)
+        eval = gpt_history(f"Q: {q}\nA: {a}\n Analysis: ", mod_a_prompt, messages, temp=1)
 
     if "Score:" in eval:
-      eval, score = eval.split("Score:")
+      eval, score = eval.split("Score:")[:2]
     else:
       score = "-1"
 
@@ -220,37 +229,54 @@ def eval_a(QA, hint, mod_a_prompt, messages):
 
 
 def motivation(user_input, messages):
-    
-    print("user input: ", user_input)
-    
-    # Insert the system message at the start of the messages list
-    system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
-        
-    Language: Hinglish
-    Study Language: English
-    Syntax:
-    Q: <question>
-    Hint: <optional>
-    A: <answer>"""
 
-    
-    
+    print("user input: ", user_input)
+
+    # Insert the system message at the start of the messages list
+    system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.
+Note: Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
+
+Language: Hinglish
+Study Language: English
+Syntax:
+Q: <question>
+Hint: <optional>
+A: <answer>"""
+
+    personal_system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota.
+Your task is to help students and answer their personal queries. Answer each question in detail.
+Note: Remember the previous messages and use them to generate context-aware responses but never repeat yourself. Make sure to address any concerns of self-harm seriously
+
+important points:
+1. Understand the psychology of a student. Your foremost objective is to help the student.
+2. Ensure that the query of student is resolved by your answer. The answer must be correct, empathetic and helpful. Use the hint for answering.
+
+Language: Hinglish
+Syntax:
+Q: <question>
+Hint: <optional>
+A: <answer>"""
+
+
+
     # Add the current user message to the messages list
-    q_analysis, intent, hint = get_hint(f"Q: {user_input}\nEvaluate Q:", messages.copy())
+    q_analysis, intent, hint = get_hint(f"Q: {user_input}\nUnderstand:", messages.copy())
     # messages.append({"role": "user", "content": f"Q: {user_input}\nHint: {hint}"})
 
     # print(json.dumps(messages, indent=4, ensure_ascii=False))
     print("text output generating...")
     # print(f"Q: {q}")
-    
+
     print( f"q_analysis: `{q_analysis}`\nhint: `{hint}`\n Intent: `{intent}`\n")
+    system_prompt = system_message
     match intent.lower().strip():
         case "greeting":
             hint  = "Greeting"
             mod_a_prompt = None
         case "personal":
-            hint = "Personal query. " + hint
+            hint = hint
             mod_a_prompt = mod_personal
+            system_prompt = personal_system_message
         case "conversational":
             hint = "Continue the conversation or ask for more question. " + hint
             mod_a_prompt = mod_conv
@@ -260,23 +286,27 @@ def motivation(user_input, messages):
         case "motion":
             hint = "Regarding Motion Coaching. " + hint
             mod_a_prompt = mod_motion
-        case "incomplete":
-            hint = "Ask for more information. " + hint
+        case "Ambiguous":
+            hint = "Ask for more information. "
             mod_a_prompt = mod_incomplete
         case _:
             mod_a_prompt = mod_default
 
     if len(hint.strip()) and hint.lower().strip() != "none":
-        a = gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+        a = gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
     else:
-        a = gpt_history(f"Q: {user_input}\nA: ", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
     print(f"answer with hint: {a}")
-    score, eval = eval_a([user_input,a], hint, mod_a_prompt, messages.copy())
+    score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
     print(score, eval)
-    if score <= 7:
-        a = gpt_history(f"Q: {user_input}\nA: ", system_message, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8F3EDZaq")
+    count = 1
+    while score <= 7 and count <= 3:
+        count += 1
+        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
         print(f"answer without hint: {a}")
-    
+        score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
+        print(score, eval)
+
     if(a.startswith('A:') ):
         a = a[2:].strip()
     if(a.startswith('Hint:') ):
@@ -285,12 +315,13 @@ def motivation(user_input, messages):
     if "no" in check:
         a = "Server Error"
         print("check : ", check)
-    
+
     print("got final answer")
     print("------------------------------------------------------------------------------------------")
     # print("messages " , messages)
 
     return a
+
 
 
 
