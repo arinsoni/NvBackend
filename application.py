@@ -27,7 +27,7 @@ load_dotenv()
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 
 
-openai.api_key = "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"
+openai.api_key = "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"
 set_api_key("82a290bde21d59052827f6d2fc1e949f")
 
 client = MongoClient('mongodb+srv://arinsoni:arinsoni@cluster0.kdmzwna.mongodb.net/')
