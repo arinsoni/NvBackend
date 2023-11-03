@@ -10,7 +10,10 @@ import openai
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymongo import MongoClient
-import re
+from botocore.exceptions import NoCredentialsError
+import boto3
+
+
 
 
 
@@ -24,39 +27,41 @@ CORS(application, resources={
 
 
 load_dotenv()
+
+
+
 ElevenLabsKey = os.environ.get("ElevenLabs_API_KEY")
 OpenAIAPIKey = os.environ.get("OPENAI_API_KEY")
 MongoDb = os.environ.get("MongoDb")
-
 
 openai.api_key = OpenAIAPIKey
 set_api_key(ElevenLabsKey)
 
 client = MongoClient(MongoDb)
 db = client.nvdata
-collection = db.collection
+collection = db.messages
 
 
 #  check
 
-
-#  check
-
+GPT_FT = "ft:gpt-3.5-turbo-0613:personal::8G72s5Ey"
+NUM_COUNT = 3
+MAX_ENG = 12 # max continuous english
 
 mod_q_prompt = """You are chatbot moderator and assistant. You'll be given a query(Q). You need to evaluate it on coherency, completeness and accuracy.
 Context: The questions are asked by students aspiring for JEE/NEET examinations. Motion is coaching Institute in Kota headed by Nitin Vijay (NV) Sir. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Understand what the query is trying to ask or convey. Make sure to address any concerns of self-harm seriously.
  2. Classify question into following intents: Greeting, Personal, Conversational, Technical, Ambiguous, Motion and Misc
- 2. If query is a difficult question, provide a few short hints in hinglish outlining the answer. (use pointers)
+ 3. If query is a difficult question, provide a few short hints in hinglish outlining the answer. (in 20 words)
 Language: Hinglish (Hint should be in Hindi with technical/difficult terms in English)
 Example Intent classification:
 1. Intent: Greeting: "Hi Sir", "Good Evening", "Namaste, kaise hain aap?".
 2. Intent: Personal: Student's personal issues/Self harm: "Sir padhai nahi ho rahi, kya karun?", "Sir depression aa raha hai".
-4. Intent Conversational: "ok", "thank you", "acha", "Mai theek hun".
+3. Intent Conversational: "ok", "thank you", "acha", "Mai theek hun".
 4. Intent Technical: "what is SHM?", "Disk ka MOI kya hota hai?" "metals ki property kya hoti hai?"
 5. Intent Ambiguous: question that require more information or context to answer: "swati mam kesi hai", "sir radhika ke kitne marks aaye".
-3. Intent Motion: "Motion achi institute hai kya", "Motion mai teachers kese recruit karte ho".
+6. Intent Motion: "Motion achi institute hai kya", "Motion mai teachers kese recruit karte ho".
 
 Syntax:
 Understand: <question-understanding>
@@ -76,16 +81,16 @@ Hint: Dost banane ki tips do jaise activities aur clubs.
 """
 
 
+# moderation prompts
 
-
-mod_default = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
+mod_default = """You are conversation quality evaluation and moderation agent. You'll be given a question(Q) answer(A) pair. You need to evaluate it on coherency, completeness and accuracy.
 Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot.
 Note: Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer. In case of incomplete info, chatbot must ask for further info.:
     i. Is the A helpful to the student?
     ii. Is the tone empathetic?
-    iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
+    iii. Is A correct solution to the query?
  2. if Q is not a question, answer should continue the conversation.
  3. Score the answer between 0 and 10 points. If answer is incomplete
 Language: Hinglish
@@ -93,20 +98,20 @@ Syntax:
 Analysis: <analysis>
 Score: <0-10>"""
 
-mod_personal = """You are conversation quality evaluation and moderation agent. You'll be given a personal question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
+mod_personal = """You are conversation quality evaluation and moderation agent. You'll be given a personal question(Q) answer(A) pair. You need to evaluate it on coherency, completeness and accuracy.
 Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer.
     i. Is the A helpful to the student?
     ii. Is the tone empathetic?
-    iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
- 3. Score the answer between 0 and 10 points.
+    iii. Is A correct solution to the query?
+ 2. Score the answer between 0 and 10 points.
 Language: Hinglish
 Syntax:
 Analysis: <analysis>
 Score: <0-10>"""
 
-mod_conv = """You are conversation quality evaluation and moderation agent. You'll be given a query(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency and completeness.
+mod_conv = """You are conversation quality evaluation and moderation agent. You'll be given a query(Q) answer(A) pair. You need to evaluate it on coherency and completeness.
 Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer.
@@ -118,13 +123,13 @@ Syntax:
 Analysis: <analysis>
 Score: <0-10>"""
 
-mod_technical = """You are conversation quality evaluation and moderation agent. You'll be given a technical question(Q) answer(A) pair with optional answer outline. You need to evaluate it on coherency, completeness and accuracy.
+mod_technical = """You are conversation quality evaluation and moderation agent. You'll be given a technical question(Q) answer(A) pair. You need to evaluate it on coherency, completeness and accuracy.
 Context: The conversation is between students aspiring for JEE/NEET examinations and chatbot. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Analyse the given Answer. In case of incomplete info, chatbot must ask for further info.:
     i. Is the A helpful to the student?
-    ii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
- 3. Score the answer between 0 and 10 points.
+    ii. Is A correct solution to the query?
+ 2. Score the answer between 0 and 10 points.
 Language: Hindi+English(Technical terms must be in english, other in hindi)
 Syntax:
 Analysis: <analysis>
@@ -136,8 +141,8 @@ Steps to follow:
  1. Analyse the given Answer. In case of incomplete info, chatbot must ask for further info.:
     i. Is the A helpful to the student?
     ii. Is the tone empathetic?
-    iii. Is A correct solution to the query? If outline is provided, does the Answer cover points from the outline?
- 3. Score the answer between 0 and 10 points.
+    iii. Is A correct solution to the query?
+ 2. Score the answer between 0 and 10 points.
 Language: Hinglish
 Syntax:
 Analysis: <analysis>
@@ -149,7 +154,7 @@ Context: The conversation is between students aspiring for JEE/NEET examinations
 Steps to follow:
  1. Analyse the given Answer.
     i. Is the tone empathetic?
-    ii. Is A answer asking for the correct information for the query? If outline is provided, does the Answer cover points from the outline?
+    ii. Is A answer asking for the correct information for the query?
  2. Score the answer between 0 and 10 points.
 Language: Hinglish
 Syntax:
@@ -212,12 +217,14 @@ def eval_a(QA, hint, mod_a_prompt, messages):
     if mod_a_prompt is None:
         return 10, ""
     if len(hint.strip()) and hint.lower().strip() != "none":
-        eval = gpt_history(f"Q: {q}\nOutline: {hint}\nA: {a}\nAnalysis: ", mod_a_prompt, messages, temp=1)
+        eval = gpt_history(f"Query: {q}\nOutline: {hint}\nAnswer: {a}\nAnalysis: ", mod_a_prompt, messages, temp=1)
     else:
-        eval = gpt_history(f"Q: {q}\nA: {a}\n Analysis: ", mod_a_prompt, messages, temp=1)
-
+        eval = gpt_history(f"Query: {q}\nAnswer: {a}\n Analysis: ", mod_a_prompt, messages, temp=1)
+    print(f"eval: {eval}")
     if "Score:" in eval:
       eval, score = eval.split("Score:")[:2]
+    elif "स्कोर:" in eval:
+      eval, score = eval.split("स्कोर:")[:2]
     else:
       score = "-1"
 
@@ -227,13 +234,8 @@ def eval_a(QA, hint, mod_a_prompt, messages):
       score = float(score.strip())
     return score, eval
 
-
-def motivation(user_input, messages):
-
-    print("user input: ", user_input)
-
-    # Insert the system message at the start of the messages list
-    system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.
+# Insert the system message at the start of the messages list
+system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.
 Note: Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 
 Language: Hinglish
@@ -243,7 +245,16 @@ Q: <question>
 Hint: <optional>
 A: <answer>"""
 
-    personal_system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota.
+system_message_wo_hint = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota. Your task is to only help students and answer their queries. Language: Hinglish.
+Note: Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
+
+Language: Hinglish
+Study Language: English
+Syntax:
+Q: <question>
+A: <answer>"""
+
+personal_system_message = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota.
 Your task is to help students and answer their personal queries. Answer each question in detail.
 Note: Remember the previous messages and use them to generate context-aware responses but never repeat yourself. Make sure to address any concerns of self-harm seriously
 
@@ -257,6 +268,49 @@ Q: <question>
 Hint: <optional>
 A: <answer>"""
 
+personal_system_message_wo_hint = """You are Nitin Vijay Sir(NV). You are a senior JEE/NEET faculty and empathetic mentor at Motion, Kota.
+Your task is to help students and answer their personal queries. Answer each question in detail.
+Note: Remember the previous messages and use them to generate context-aware responses but never repeat yourself. Make sure to address any concerns of self-harm seriously
+
+important points:
+1. Understand the psychology of a student. Your foremost objective is to help the student.
+2. Ensure that the query of student is resolved by your answer. The answer must be correct, empathetic and helpful.
+
+Language: Hinglish
+Syntax:
+Q: <question>
+A: <answer>"""
+
+
+def count_english(txt):
+    # counts max contiguous english words in the txt
+    if txt == "":
+        return 0
+    words = txt.split(" ")
+    max_count = 0
+    count = 0
+    for word in words:
+        if word.upper().isupper():
+          count += 1
+        else:
+          max_count = max(count, max_count)
+          count = 0
+    max_count = max(count, max_count)
+    count = 0
+    return max_count
+
+translate_prompt = """You are a tone change model. You will be given a string in Hindi+English.
+Keep the mixed english words untouched. Change only some English sentences into English and Hindi mixed.
+Use English terms for all technical words.(eg. equilibrium, metal, ellipse)
+Language: Hinglish
+Study Language: English
+NOTE: all words that can be written in english language are always in Latin alphabet. All technical words must be in Latin alphabet.
+example: "physics" stays as "physics", "friend" is untouched as "friend" and not "फ्रेंड"
+"""
+
+def motivation(user_input, messages):
+
+    print("user input: ", user_input)
 
 
     # Add the current user message to the messages list
@@ -268,7 +322,11 @@ A: <answer>"""
     # print(f"Q: {q}")
 
     print( f"q_analysis: `{q_analysis}`\nhint: `{hint}`\n Intent: `{intent}`\n")
+    score_ans = []
+
     system_prompt = system_message
+    system_prompt_wo_hint = system_message_wo_hint
+    temp = 0.85
     match intent.lower().strip():
         case "greeting":
             hint  = "Greeting"
@@ -277,12 +335,14 @@ A: <answer>"""
             hint = hint
             mod_a_prompt = mod_personal
             system_prompt = personal_system_message
+            system_prompt_wo_hint = personal_system_message_wo_hint
         case "conversational":
             hint = "Continue the conversation or ask for more question. " + hint
             mod_a_prompt = mod_conv
         case "technical":
             hint = "Techical query. " + hint
             mod_a_prompt = mod_technical
+            temp = 0.9
         case "motion":
             hint = "Regarding Motion Coaching. " + hint
             mod_a_prompt = mod_motion
@@ -293,24 +353,36 @@ A: <answer>"""
             mod_a_prompt = mod_default
 
     if len(hint.strip()) and hint.lower().strip() != "none":
-        a = gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
+        a = gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_prompt, messages.copy(),  temp=temp, model=GPT_FT)
     else:
-        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
+        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT)
     print(f"answer with hint: {a}")
     score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
-    print(score, eval)
+    # print(score, eval)
+    score_ans.append([score,a])
     count = 1
-    while score <= 7 and count <= 3:
+    while score <= 7 and count <= NUM_COUNT:
         count += 1
-        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt, messages.copy(),  temp=0.85, model="ft:gpt-3.5-turbo-0613:personal::8G72s5Ey")
+        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT)
         print(f"answer without hint: {a}")
         score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
         print(score, eval)
+        score_ans.append([score,a])
+    if count > NUM_COUNT:
+        a = sorted(score_ans, reverse=True)[0][1]
+
+    # Post-processing
+
+    if count_english(a) > MAX_ENG:
+        print("Translating to increase Hindi")
+        a = gpt_history(a, translate_prompt, [], temp = 1)
 
     if(a.startswith('A:') ):
         a = a[2:].strip()
     if(a.startswith('Hint:') ):
         a = a[5:].strip()
+    if "Hint:" in a:
+      a = a.split("Hint:")[0]
     check = gpt_history(a, mod_a_strict, [], temp = 1)
     if "no" in check:
         a = "Server Error"
@@ -323,6 +395,22 @@ A: <answer>"""
     return a
 
 
+s3 = boto3.resource('s3')
+
+# To upload a file
+def upload_to_s3(local_file, s3_filename):
+    bucket_name = 'appnv-audio-storage'
+    try:
+        bucket = s3.Bucket(bucket_name)
+        bucket.upload_file(local_file, s3_filename)
+        print("Upload Successful")
+        return True
+    except FileNotFoundError:
+        print("The file was not found")
+        return False
+    except NoCredentialsError:
+        print("Credentials not available")
+        return False
 
 
 def getVoice(text, id):
@@ -338,9 +426,20 @@ def getVoice(text, id):
     )
     print("audio generated")
 
-    save(audio, f"audio{id}.mp3")
-    audio_file = f'audio{id}.mp3'
+    local_audio_path = f"audio{id}.mp3"
+    save(audio, local_audio_path)  # Assuming you have a 'save' function
+
+    # Upload to S3
+    s3_filename = f"audios/{id}.mp3"
+    success = upload_to_s3(local_audio_path, s3_filename)
+
+    # Modify the path to point to the S3 bucket if upload was successful
+    if success:
+        audio_file = f'https://appnv-audio-storage.s3.amazonaws.com/{s3_filename}'
+    else:
+        audio_file = None
     return audio_file
+
 
 
 
@@ -354,7 +453,7 @@ def process_input(user_id):
     threadId = data['threadId'] 
     isFirstMessageSent = data['isFirstMessageSent']
 
-    user = db.collection.find_one({'userId': userId})
+    user = collection.find_one({'userId': userId})
     print("userId  = "  + userId + ' threadId = ' + threadId  + " ------------------------------------------------------------------------------------------" )
 
     if user:
@@ -392,7 +491,8 @@ def process_input(user_id):
     
     response = {
         'text_response': gpt_ans,
-        'audio_response': request.url_root + 'audio/' + audio_file_name,
+        'audio_response': audio_file_name,
+
     }
 
 
@@ -404,11 +504,11 @@ def process_input(user_id):
         'timestamp': timestamp_dt.strftime("%Y-%m-%dT%H:%M:%S.%f"),
     }
 
-    user = db.collection.find_one({'userId': userId})
+    user = collection.find_one({'userId': userId})
     if user:
         thread = next((t for t in user['threads'] if t['threadId'] == threadId), None)
         if thread:
-            db.collection.update_one(
+            collection.update_one(
                 {'userId': userId, 'threads.threadId': threadId},
                 {'$push': {'threads.$.messages': message_content}}
             )
@@ -420,7 +520,7 @@ def process_input(user_id):
                 'messages': [message_content],
                 'isFavorite': False,
             }
-            db.collection.update_one(
+            collection.update_one(
                 {'userId': userId},
                 {'$push': {'threads': new_thread}}
             )
@@ -436,7 +536,7 @@ def process_input(user_id):
                 
             }]
         }
-        db.collection.insert_one(new_user)
+        collection.insert_one(new_user)
 
     # print('Received message with timestamp:', timestamp_dt)
     # print(response)
@@ -470,7 +570,7 @@ def serve_audio(filename):
 def get_messages(user_id, thread_id):
     print(f"Fetching messages for user_id: {user_id} and thread_id: {thread_id}")
 
-    user = db.collection.find_one({"userId": user_id})
+    user = collection.find_one({"userId": user_id})
     
     if user:
         thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
@@ -499,12 +599,12 @@ def get_threads(user_id):
 
     try:
         # print("in get threads fun")
-        user_document = db.collection.find_one({"userId": user_id}, {"_id": 0, "threads": 1})
+        user_document = collection.find_one({"userId": user_id}, {"_id": 0, "threads": 1})
         # print(user_document)
 
         if not user_document:
             # print("nahi hai")
-            db.collection.insert_one({"userId": user_id, "threads": []})
+            collection.insert_one({"userId": user_id, "threads": []})
             return jsonify([]), 200  
 
         if user_document and 'threads' in user_document:
@@ -570,7 +670,7 @@ def update_favorite_thread():
             }
         }
 
-        result = db.collection.update_one(query, update)
+        result = collection.update_one(query, update)
 
         # print('Update result: ', result.raw_result)  
         if result.matched_count > 0:
@@ -594,7 +694,7 @@ def delete_message():
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        user = db.collection.find_one({'userId': user_id})
+        user = collection.find_one({'userId': user_id})
         
         if user:
             thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
@@ -608,7 +708,7 @@ def delete_message():
 
                 print(f"after delete debug {json.dumps(user['threads'], indent=4, ensure_ascii=False)}")
 
-                db.collection.update_one(
+                collection.update_one(
                     {'userId': user_id},
                     {'$set': {'threads': user['threads']}}
                 )
@@ -635,7 +735,7 @@ def delete_thread():
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        result = db.collection.update_one(
+        result = collection.update_one(
             {'userId': user_id}, 
             {'$pull': {'threads': {'threadId': thread_id}}}
         )
@@ -655,3 +755,6 @@ def delete_thread():
 
 if __name__ == "__main__":
     application.run(host='0.0.0.0', port=5000)
+
+
+
