@@ -553,17 +553,6 @@ def truncate_string(text, max_words=100):
         truncated_text += ' ...'
     return truncated_text
 
-
-
-@application.route('/audio/<filename>', methods=['GET'])
-def serve_audio(filename):
-    audio_directory = '.'  
-    file_path = safe_join(audio_directory, filename)  
-
-    if os.path.isfile(file_path):
-        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
-    else:
-        return "File not found", 404
     
 
 @application.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
