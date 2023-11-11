@@ -41,7 +41,6 @@ client = MongoClient(MongoDb)
 db = client.nvdata
 collection = db.messages
 
-
 #  check
 
 GPT_FT = "ft:gpt-3.5-turbo-0613:personal::8G72s5Ey"
@@ -52,16 +51,17 @@ mod_q_prompt = """You are chatbot moderator and assistant. You'll be given a que
 Context: The questions are asked by students aspiring for JEE/NEET examinations. Motion is coaching Institute in Kota headed by Nitin Vijay (NV) Sir. Also Remember the previous messages and use them to generate context-aware responses but don't repeat yourself.
 Steps to follow:
  1. Understand what the query is trying to ask or convey. Make sure to address any concerns of self-harm seriously.
- 2. Classify question into following intents: Greeting, Personal, Conversational, Technical, Ambiguous, Motion and Misc
+ 2. Classify question into following intents: Greeting, Student-Personal, Conversational, Technical, Ambiguous, Motion, NV-Personal and Misc
  3. If query is a difficult question, provide a few short hints in hinglish outlining the answer. (in 20 words)
 Language: Hinglish (Hint should be in Hindi with technical/difficult terms in English)
 Example Intent classification:
 1. Intent: Greeting: "Hi Sir", "Good Evening", "Namaste, kaise hain aap?".
-2. Intent: Personal: Student's personal issues/Self harm: "Sir padhai nahi ho rahi, kya karun?", "Sir depression aa raha hai".
+2. Intent: Student-Personal: Student's personal issues/Self harm: "Sir padhai nahi ho rahi, kya karun?", "Sir depression aa raha hai".
 3. Intent Conversational: "ok", "thank you", "acha", "Mai theek hun".
 4. Intent Technical: "what is SHM?", "Disk ka MOI kya hota hai?" "metals ki property kya hoti hai?"
 5. Intent Ambiguous: question that require more information or context to answer: "swati mam kesi hai", "sir radhika ke kitne marks aaye".
 6. Intent Motion: "Motion achi institute hai kya", "Motion mai teachers kese recruit karte ho".
+7. Intent NV-personal: asking about NV sir's personal details. "aapki success story sunao", "Sir aapki favourite game konsi hai?".
 
 Syntax:
 Understand: <question-understanding>
@@ -118,7 +118,7 @@ Steps to follow:
     i. Is the tone empathetic?
     ii. Is the A is natural sounding?
  2. Score the answer between 0 and 10 points based on above analysis.
-Language: Hinglish(mostly easy Hindi)
+Language: Hinglish
 Syntax:
 Analysis: <analysis>
 Score: <0-10>"""
@@ -130,7 +130,7 @@ Steps to follow:
     i. Is the A helpful to the student?
     ii. Is A correct solution to the query?
  2. Score the answer between 0 and 10 points.
-Language: Hindi+English(Technical terms must be in english, other in hindi)
+Language: Hinglish
 Syntax:
 Analysis: <analysis>
 Score: <0-10>"""
@@ -167,6 +167,7 @@ mod_a_strict = """"You are chatbot moderation agent. You are supposed to do lang
 Ensure that the language of text is appropriate for students. Only if inappropriate words are used in the text, flag the text as "Appropriate: no"
 Ensure text is not racist/misogynistic and doesn't promote any forms of self harm.
 Syntax:
+Text: '<text>'
 Appropriate: <yes/no>"""
 
 
@@ -214,6 +215,8 @@ def gpt_history(txt, sys_prompt, messages, model="gpt-3.5-turbo", temp=0.7):
 def eval_a(QA, hint, mod_a_prompt, messages):
     q = QA[0]
     a = QA[1]
+    if "Q:" in a:
+      return -1, ""
     if mod_a_prompt is None:
         return 10, ""
     if len(hint.strip()) and hint.lower().strip() != "none":
@@ -299,16 +302,50 @@ def count_english(txt):
     count = 0
     return max_count
 
-translate_prompt = """You are a tone change model. You will be given a string in Hindi+English.
-Keep the mixed english words untouched. Change only some English sentences into English and Hindi mixed.
-Use English terms for all technical words.(eg. equilibrium, metal, ellipse)
+translate_prompt = """You are a language translation model. Translate given string to common Hinglish. You will be given a string in English+Hindi.
+Keep the hindi and mixed-english words untouched. Change all English sentences into Hindi and English words mixed.
+Use English terms only for all technical words.(eg. equilibrium, metal, ellipse).
+
 Language: Hinglish
-Study Language: English
-NOTE: all words that can be written in english language are always in Latin alphabet. All technical words must be in Latin alphabet.
-example: "physics" stays as "physics", "friend" is untouched as "friend" and not "फ्रेंड"
+Study/Technical Language: English
+NOTE: all words that can be written in english language are always in Latin alphabet.
+example: "physics" stays as "physics", "rotational" remains "rotational" and not "क्रान्तिकारी"
+
+Syntax:
+text: <text>
+output: <translated-text>
+
+Few Shot examples:
+
+text: Rotational dynamics deals with the motion of objects that rotate around a fixed axis. It involves concepts such as torque, moment of inertia, angular velocity, and angular momentum. Torque is the rotational equivalent of force and is responsible for producing rotational motion. Moment of inertia is a measure of an object's resistance to changes in its rotational motion. Angular velocity is the rate at which an object rotates around an axis, while angular momentum is the measure of an object's tendency to keep rotating at a constant speed.
+output: Rotational dynamics objects को handle करता है जो एक fixed axis के आस-पास घूमते हैं. इसमें torque, moment of inertia, angular velocity, और angular momentum जैसे concepts शामिल होते हैं. Torque force का rotational रूप है और घूमते हुए motion को उत्पन्न करने के लिए जिम्मेदार होता है. Moment of inertia एक object की rotational motion में परिवर्तन को प्रतिरोध करने का measure होता है. Angular velocity एक axis के आस-पास घूमने वाले object की rate है, जबकि angular momentum एक object के constant speed पर घूमने की tendency को measure करता है
+
+text: सबसे पहले तो, आपको समझना होगा क अगर आप stress म ह, तो उससे exam की preparation अच्छी नहीं होगी। toh sabse pehle, आपको apne stress level को manage करना होगा। Exam का syllabus बहुत extensive है, मैं समझता हूँ। पर ये सब के लिए 1.5 month क preparation का time period है, सो nothing to worry about it. Yes, we can complete the whole syllabus in this period of time but you have to remain stress free.
+So what we need to do for that?
+Let's start with making a study schedule. Break down the syllabus into smaller parts and assign specific time slots for each part. Make sure to take regular breaks in between to manage stress.
+output: सबसे पहले तो, आपको समझना होगा कि अगर आप stress में है, तो उससे exam की preparation अच्छी नहीं होगी। तो सबसे पहले, आपको अपने stress level को manage करना होगा। Exam का syllabus बहुत extensive है, मैं समझता हूँ। पर ये सब के लिए 1.5 month का preparation का time period है, तो चिंता की कोई बात नहीं है. हाँ, हम इस time period में पूरा syllabus complete कर सकते हैं, लेकिन आपको stress free रहना होगा।
+हमें इसके लिए क्या करना चाहिए?
+चलिए एक study schedule बनाने से शुरू करते हैं। syllabus को छोटे-मोटे parts में टूटने के लिए और हर part के लिए specific time slots assign करें। Stress को manage करने के लिए बीच में नियमित breaks लेने का ध्यान दें।
+
 """
 
+translate_hindi_prompt = "You are a language translation model. Translate given Hinglish string to Hindi(devnagri). Use easy to understand Hindi."
+
+def process(a):
+    if(a.startswith('A:')):
+        a = a[2:].strip()
+    if(a.startswith('Hint:') ):
+        a = a[5:].strip()
+    if "Hint:" in a:
+        a = a.split("Hint:")[0]
+    if "Answer:" in a:
+        a = a.split("Answer:")[-1]
+    if a.startswith("टेक्निकल सवाल।"):
+        a = a[len("टेक्निकल सवाल।"):]
+    return a
+
 def motivation(user_input, messages):
+    prefix = ""
 
     print("user input: ", user_input)
 
@@ -331,7 +368,7 @@ def motivation(user_input, messages):
         case "greeting":
             hint  = "Greeting"
             mod_a_prompt = None
-        case "personal":
+        case "student-personal":
             hint = hint
             mod_a_prompt = mod_personal
             system_prompt = personal_system_message
@@ -340,22 +377,33 @@ def motivation(user_input, messages):
             hint = "Continue the conversation or ask for more question. " + hint
             mod_a_prompt = mod_conv
         case "technical":
-            hint = "Techical query. " + hint
+            hint = "Technical query. " + hint
+            prefix = "Disclaimer: The model is still learning, hence the given answer might be incorrect."
             mod_a_prompt = mod_technical
             temp = 0.9
         case "motion":
-            hint = "Regarding Motion Coaching. " + hint
-            mod_a_prompt = mod_motion
-        case "Ambiguous":
+            # hint = "Regarding Motion Coaching. " + hint
+            # mod_a_prompt = mod_motion
+            a = "माफ़ कीजिए, I am still evolving, मैं Motion संबंधित उत्तर नहीं दे सकता। कृपया Motion से संपर्क करें।,"
+            return a, prefix
+        case "nv-personal":
+            a = "I'm sorry, मैं मेरे personal details के बारे में बात नहीं कर सकता। आपको और कोई सवाल है तो बिल्कुल पूछो।"
+            return a, prefix
+        case "ambiguous":
             hint = "Ask for more information. "
             mod_a_prompt = mod_incomplete
         case _:
+            if "personal" in intent.lower():
+                mod_a_prompt = mod_personal
+                system_prompt = personal_system_message
+                system_prompt_wo_hint = personal_system_message_wo_hint
+            # default
             mod_a_prompt = mod_default
 
     if len(hint.strip()) and hint.lower().strip() != "none":
-        a = gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_prompt, messages.copy(),  temp=temp, model=GPT_FT)
+        a = process(gpt_history(f"Q: {user_input}\nHint: {hint}\nA:", system_prompt, messages.copy(),  temp=temp, model=GPT_FT))
     else:
-        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT)
+        a = process(gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT))
     print(f"answer with hint: {a}")
     score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
     # print(score, eval)
@@ -363,27 +411,34 @@ def motivation(user_input, messages):
     count = 1
     while score <= 7 and count <= NUM_COUNT:
         count += 1
-        a = gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT)
+        a = process(gpt_history(f"Q: {user_input}\nA: ", system_prompt_wo_hint, messages.copy(),  temp=temp, model=GPT_FT))
         print(f"answer without hint: {a}")
         score, eval = eval_a([user_input,a], "", mod_a_prompt, messages.copy())
-        print(score, eval)
+        # print(score, eval)
         score_ans.append([score,a])
-    if count > NUM_COUNT:
+    if score <= 7 and count > NUM_COUNT:
         a = sorted(score_ans, reverse=True)[0][1]
 
     # Post-processing
-
-    if count_english(a) > MAX_ENG:
+    count = 1
+    eng_ans = [[count_english(a), a]]
+    while count_english(a) > MAX_ENG and count <= 2:
+        count += 1
         print("Translating to increase Hindi")
-        a = gpt_history(a, translate_prompt, [], temp = 1)
+        a = gpt_history(f"text: {a}", translate_prompt, [], temp = 0.85)
+        if(a.startswith("output:")):
+            a = a[7:]
+        if "output:" in a:
+            a = a.split("output:")[-1]
+        eng_ans.append([count_english(a), a])
+        print(f"translated: {a}")
+    if count_english(a) > MAX_ENG and count > 2:
+        print("one more to go :p")
+        a = gpt_history(f"{a}", translate_hindi_prompt, [], temp = 0.95)
+        print(f"final translation: {a}")
 
-    if(a.startswith('A:') ):
-        a = a[2:].strip()
-    if(a.startswith('Hint:') ):
-        a = a[5:].strip()
-    if "Hint:" in a:
-      a = a.split("Hint:")[0]
-    check = gpt_history(a, mod_a_strict, [], temp = 1)
+    a = process(a)
+    check = gpt_history(f"Text: '{a}'", mod_a_strict, [], temp = 1)
     if "no" in check:
         a = "Server Error"
         print("check : ", check)
@@ -392,7 +447,7 @@ def motivation(user_input, messages):
     print("------------------------------------------------------------------------------------------")
     # print("messages " , messages)
 
-    return a
+    return a, prefix
 
 
 s3 = boto3.resource('s3')
@@ -477,13 +532,10 @@ def process_input(user_id):
     print("end")
 
     # gpt_ans = motivation(user_input)
-    gpt_ans = motivation(user_input, cleaned_messages)
-
-    
-# 
-    
+    gpt_ans, prefix = motivation(user_input, cleaned_messages)
 
     audio_file_name = getVoice(gpt_ans, unique_id)
+    gpt_ans = prefix + gpt_ans
 
     timestamp_dt = datetime.strptime(data['timestamp'], "%Y-%m-%dT%H:%M:%S.%f")
    
@@ -494,8 +546,6 @@ def process_input(user_id):
         'audio_response': audio_file_name,
 
     }
-
-
    
     message_content = {
         'input': user_input,
@@ -553,6 +603,17 @@ def truncate_string(text, max_words=100):
         truncated_text += ' ...'
     return truncated_text
 
+
+
+@application.route('/audio/<filename>', methods=['GET'])
+def serve_audio(filename):
+    audio_directory = '.'  
+    file_path = safe_join(audio_directory, filename)  
+
+    if os.path.isfile(file_path):
+        return send_file(file_path, as_attachment=True, download_name=filename, mimetype='audio/mpeg')
+    else:
+        return "File not found", 404
     
 
 @application.route('/get_messages/<user_id>/<thread_id>', methods=['GET'])
