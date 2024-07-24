@@ -433,7 +433,7 @@ def getVoice(text, id):
     s3_filename = f"audios/{id}.mp3"
     success = upload_to_s3(local_audio_path, s3_filename)
 
-    # Modify the path to point to the S3 bucket if upload was successful
+
     if success:
         audio_file = f'https://appnv-audio-storage.s3.amazonaws.com/{s3_filename}'
     else:
@@ -449,10 +449,11 @@ def check_limit(user_id):
     user_exists = collection.find_one({'userId': user_id}) is not None
 
     if user_count >= MAX_USERS and not user_exists:
-        # User limit reached and user is new
+
         return jsonify({'error': 'New user limit reached'}), 403
     else:
-        # User limit not reached or user is existing
+
+        
         return jsonify({'message': 'Access granted', 'current_count': user_count}), 200
 
 
@@ -578,10 +579,9 @@ def process_input(user_id):
 def update_reaction(user_id, thread_id, message_id):
     data = request.json
     reaction_type = data['reaction_type']
-    # Find the user and the specific message by ID
+
     user = collection.find_one({'userId': user_id})
     if user:
-        # You might need to adjust the query to correctly navigate your data structure
         thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
         if not thread:
             return jsonify({'error': 'Thread not found'}), 404
@@ -593,14 +593,13 @@ def update_reaction(user_id, thread_id, message_id):
     
                 if reaction_type == 'thumbsUp':
                     m['thumbsUp'] = not m['thumbsUp']
-                    if m['thumbsUp']:  # If thumbs up is toggled on, turn thumbs down off.
+                    if m['thumbsUp']:  
                         m['thumbsDown'] = False
                 elif reaction_type == 'thumbsDown':
                     m['thumbsDown'] = not m['thumbsDown']
-                    if m['thumbsDown']:  # If thumbs down is toggled on, turn thumbs up off.
+                    if m['thumbsDown']:  
                         m['thumbsUp'] = False
-                # Update the message in the database
-                # You will need to use the correct update query depending on your database structure
+
        
                 collection.update_one(
                     {'userId': user_id, 'threads.threadId': thread_id},
@@ -769,7 +768,7 @@ def delete_message():
             thread = next((t for t in user['threads'] if t['threadId'] == thread_id), None)
             
             if thread and 0 <= index < len(thread['messages']):
-                # Remove the message at the specified index
+
                 # print(f"before delete debug {json.dumps(user['threads'], indent=4, ensure_ascii=False)}")
                 print(thread['messages'][len(thread['messages'])-1])
                 del thread['messages'][len(thread['messages'])-1]
